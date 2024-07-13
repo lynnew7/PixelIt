@@ -19,6 +19,7 @@
 #include <Adafruit_BME280.h>
 #include <Adafruit_BMP280.h>
 #include <Adafruit_BME680.h>
+#include "Adafruit_HTU21DF.h"
 // WiFi & Web
 #include <WebSocketsServer.h>
 #include <WiFiClient.h>
@@ -182,6 +183,7 @@ Adafruit_BME280 *bme280;
 Adafruit_BMP280 *bmp280;
 Adafruit_BME680 *bme680;
 Adafruit_SHT31 sht31 = Adafruit_SHT31(&twowire);
+Adafruit_HTU21DF htu = Adafruit_HTU21DF();
 unsigned long lastBME680read = 0;
 DHTesp dht;
 
@@ -194,6 +196,7 @@ enum TempSensor
     TempSensor_BME680,
     TempSensor_BMP280,
     TempSensor_SHT31,
+    TempSensor_HTU21DF,
 };
 TempSensor tempSensor = TempSensor_None;
 
@@ -1946,6 +1949,19 @@ String GetSensor()
             root["temperature"] = CelsiusToFahrenheit(currentTemp) + temperatureOffset;
         }
     }
+    else if (tempSensor == TempSensor_HTU21DF)
+    {
+        const float currentTemp = htu.readTemperature();
+        root["temperature"] = currentTemp + temperatureOffset;
+        root["humidity"] = roundf(htu.readHumidity() + humidityOffset);
+        root["pressure"] = "Not installed";
+        root["gas"] = "Not installed";
+
+        if (temperatureUnit == TemperatureUnit_Fahrenheit)
+        {
+            root["temperature"] = CelsiusToFahrenheit(currentTemp) + temperatureOffset;
+        }
+    }
     else if (tempSensor == TempSensor_BME680)
     {
         /***************************************************************************************************
@@ -2163,7 +2179,7 @@ void SendTelemetry()
 String GetTelemetry()
 {
     const String MatrixTypeNames[] = {"Colum major", "Row major", "Tiled 4x 8x8 CJMCU (Column major)", "MicroMatrix", "Tiled 4x 8x8 CJMCU (Row major)"};
-    const String TempSensorNames[] = {"none", "BME280", "DHT", "BME680", "BMP280", "SHT31"};
+    const String TempSensorNames[] = {"none", "BME280", "DHT", "BME680", "BMP280", "SHT31", "HTU21DF"};
     const String LuxSensorNames[] = {"LDR", "BH1750", "Max44009"};
 
     DynamicJsonBuffer jsonBuffer;
@@ -3659,76 +3675,84 @@ void setup()
     }
 
     // Init Temp Sensors
-    Log(F("Setup"), F("SHT31 Trying"));
-    if (sht31.begin(0x44))
+    Log(F("Setup"), F("HTU21DF Trying"));
+    if (htu.begin())
     {
-        Log(F("Setup"), F("SHT31 started"));
-        tempSensor = TempSensor_SHT31;
+        Log(F("Setup"), F("HTU21DF started"));
+        tempSensor = TempSensor_HTU21DF;
     }
     else
     {
-        Log(F("Setup"), F("BME280 Trying"));
-        bme280 = new Adafruit_BME280();
-        if (bme280->begin(BME280_ADDRESS_ALTERNATE, &twowire))
+        Log(F("Setup"), F("SHT31 Trying"));
+        if (sht31.begin(0x44))
         {
-            Log(F("Setup"), F("BME280 started"));
-            tempSensor = TempSensor_BME280;
+            Log(F("Setup"), F("SHT31 started"));
+            tempSensor = TempSensor_SHT31;
         }
         else
         {
-            delete bme280;
-            bmp280 = new Adafruit_BMP280(&twowire);
-            Log(F("Setup"), F("BMP280 Trying"));
-            if (bmp280->begin(BMP280_ADDRESS_ALT, 0x58))
+            Log(F("Setup"), F("BME280 Trying"));
+            bme280 = new Adafruit_BME280();
+            if (bme280->begin(BME280_ADDRESS_ALTERNATE, &twowire))
             {
-                Log(F("Setup"), F("BMP280 started"));
-                tempSensor = TempSensor_BMP280;
+                Log(F("Setup"), F("BME280 started"));
+                tempSensor = TempSensor_BME280;
             }
             else
             {
-                delete bmp280;
-                bme680 = new Adafruit_BME680(&twowire);
-                Log(F("Setup"), F("BME680 Trying"));
-                if (bme680->begin())
+                delete bme280;
+                bmp280 = new Adafruit_BMP280(&twowire);
+                Log(F("Setup"), F("BMP280 Trying"));
+                if (bmp280->begin(BMP280_ADDRESS_ALT, 0x58))
                 {
-                    Log(F("Setup"), F("BME680 started"));
-                    tempSensor = TempSensor_BME680;
+                    Log(F("Setup"), F("BMP280 started"));
+                    tempSensor = TempSensor_BMP280;
                 }
                 else
                 {
-                    Log(F("Setup"), F("No SHT31, BMP280, BME280 or BME680 sensor found"));
-                    // AM2320 needs a delay to be reliably initialized
-                    delete bme680;
-
-                    // continue only if:
-                    //  - LDR is being used. This means: no light sensor in I²C bus.
-                    //  - SDA and SCL use different pin than onewire
-
-                    // Otherwise, we already found a light sensor on I²C. If we would start a probe for OneWire on the same pin now, I²C will be disfunctional.
-                    if (luxSensor == LuxSensor_LDR || (onewirePin != SDAPin && onewirePin != SCLPin))
+                    delete bmp280;
+                    bme680 = new Adafruit_BME680(&twowire);
+                    Log(F("Setup"), F("BME680 Trying"));
+                    if (bme680->begin())
                     {
-                        delay(800);
-                        dht.setup(TranslatePin(onewirePin), DHTesp::DHT22);
-                        Log(F("Setup"), F("DHT Trying"));
-                        if (!isnan(dht.getHumidity()) && !isnan(dht.getTemperature()))
-                        {
-                            Log(F("Setup"), F("DHT started"));
-                            tempSensor = TempSensor_DHT;
-                        }
-                        else
-                        {
-                            Log(F("Setup"), F("No DHT Sensor found"));
-                        }
+                        Log(F("Setup"), F("BME680 started"));
+                        tempSensor = TempSensor_BME680;
                     }
                     else
                     {
-                        Log(F("Setup"), F("Not probing DHT sensor: light sensor already found on same pin as DHT."));
+                        Log(F("Setup"), F("No SHT31, BMP280, BME280 or BME680 sensor found"));
+                        // AM2320 needs a delay to be reliably initialized
+                        delete bme680;
+
+                        // continue only if:
+                        //  - LDR is being used. This means: no light sensor in I²C bus.
+                        //  - SDA and SCL use different pin than onewire
+
+                        // Otherwise, we already found a light sensor on I²C. If we would start a probe for OneWire on the same pin now, I²C will be disfunctional.
+                        if (luxSensor == LuxSensor_LDR || (onewirePin != SDAPin && onewirePin != SCLPin))
+                        {
+                            delay(800);
+                            dht.setup(TranslatePin(onewirePin), DHTesp::DHT22);
+                            Log(F("Setup"), F("DHT Trying"));
+                            if (!isnan(dht.getHumidity()) && !isnan(dht.getTemperature()))
+                            {
+                                Log(F("Setup"), F("DHT started"));
+                                tempSensor = TempSensor_DHT;
+                            }
+                            else
+                            {
+                                Log(F("Setup"), F("No DHT Sensor found"));
+                            }
+                        }
+                        else
+                        {
+                            Log(F("Setup"), F("Not probing DHT sensor: light sensor already found on same pin as DHT."));
+                        }
                     }
                 }
             }
         }
     }
-
     switch (matrixType)
     {
     default: // Matix Type 1 (Colum major)
